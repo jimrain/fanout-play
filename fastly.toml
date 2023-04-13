@@ -7,3 +7,6 @@ language = "rust"
 manifest_version = 2
 name = "fanout-play"
 service_id = "4QG7PFi7i2QjlZanNGM3ij"
+
+[scripts]
+  build = "cargo build --bin fanout-play --release --target wasm32-wasi --color always"

@@ -1,6 +1,6 @@
 use fastly::experimental::RequestUpgradeWebsocket;
 use fastly::http::{header, Method, StatusCode};
-use fastly::{mime, Dictionary, Error, Request, Response};
+use fastly::{mime, Error, Request, Response, ConfigStore};
 use handlebars::Handlebars;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -56,6 +56,12 @@ fn handle_sse(_req: Request) -> Response {
 }
 
 fn handle_ws(mut req: Request) -> Response {
+    match req.get_header_str("Connection-Id") {
+        Some(s) => println!("Connection ID: {}", s),
+        None => {
+            println!("No connection Id")
+        }
+    }
     let content_type = match req.get_header_str("Content-Type") {
         Some(s) => s,
         None => {
@@ -69,6 +75,7 @@ fn handle_ws(mut req: Request) -> Response {
     }
 
     let body = req.take_body().into_bytes();
+    println!("In body: {:?}", String::from_utf8_lossy(&body));
 
     let mut sub = false;
 
@@ -77,7 +84,7 @@ fn handle_ws(mut req: Request) -> Response {
     }
 
     // echo
-    let mut out_body = body.clone();
+    let mut out_body = body;
 
     if sub {
         let chan = match req.get_query_parameter("channel") {
@@ -88,9 +95,9 @@ fn handle_ws(mut req: Request) -> Response {
         out_body.extend(format!("TEXT {:02x}\r\n{}\r\n", msg.len(), msg).as_bytes());
         let ka = "c:{\"type\": \"keep-alive\", \"content\": \"{}\", \"timeout\": 30}";
         out_body.extend(format!("TEXT {:02x}\r\n{}\r\n", ka.len(), ka).as_bytes());
-        println!("Out body: {:?}", out_body);
     } else {
-        out_body.extend(format!(" Off").as_bytes());
+        // out_body.extend(format!(" Off").as_bytes());
+        println!("Keep alive")
     }
 
     let mut resp = Response::from_status(StatusCode::OK)
@@ -98,8 +105,10 @@ fn handle_ws(mut req: Request) -> Response {
 
     if sub {
         resp.set_header("Sec-WebSocket-Extensions", "grip; message-prefix=\"\"");
+        resp.set_header("Keep-Alive-Interval", "60");
     }
 
+    println!("Out body: {:?}", String::from_utf8_lossy(&out_body));
     resp.set_body(out_body);
 
     resp
@@ -121,7 +130,7 @@ fn handle(req: Request) -> Result<Response, Error> {
 
 fn fanout_publish(channel: &str, msg: &str) {
     let sid = std::env::var("FASTLY_SERVICE_ID").unwrap_or_else(|_| String::new());
-    let secret = Dictionary::open(CONFIG_NAME).get("secret").unwrap();
+    let secret = ConfigStore::open(CONFIG_NAME).get("secret").unwrap();
     let auth_basic = format!("Basic {}", base64::encode(format!("{}:{}", sid, secret)));
     // JMR - It's easy enough to create the JSON string for this case but if it gets more complex
     // I should use serde.
@@ -162,10 +171,10 @@ fn main() -> Result<(), Error> {
                 ]);
                 // New handlebars
                 let video_body = reg.render_template(raw_html, &json!(data))?;
-                return Ok(Response::from_status(StatusCode::OK)
+                Ok(Response::from_status(StatusCode::OK)
                     .with_content_type(mime::TEXT_HTML_UTF_8)
                     .with_body(video_body)
-                    .send_to_client());
+                    .send_to_client())
             }
             "/subscribe" => {
                 let chan = match req.get_query_parameter("channel") {
@@ -176,10 +185,10 @@ fn main() -> Result<(), Error> {
                 let reg = Handlebars::new();
                 // New handlebars
                 let subscribe_body = reg.render_template(raw_html, &json!({ "channel": chan }))?;
-                return Ok(Response::from_status(StatusCode::OK)
+                Ok(Response::from_status(StatusCode::OK)
                     .with_content_type(mime::TEXT_HTML_UTF_8)
                     .with_body(subscribe_body)
-                    .send_to_client());
+                    .send_to_client())
             }
             "/publish" => match req.get_method() {
                 &Method::GET => {
@@ -210,7 +219,7 @@ fn main() -> Result<(), Error> {
                 _ => {
                     return Ok(Response::from_status(StatusCode::BAD_REQUEST)
                         .with_body("Method not supported.\n")
-                        .send_to_client());
+                        .send_to_client())
                 }
             },
             _ => {
@@ -223,7 +232,7 @@ fn main() -> Result<(), Error> {
                 println!("Upgrading the websocket!");
                 // despite the name, this function works for both http requests and
                 // websockets. we plan to update the SDK to make this more intuitive
-                Ok(req.upgrade_websocket("jr-ws-play")?)
+                Ok(req.handoff_websocket("jr-ws-play")?)
             }
         }
     }

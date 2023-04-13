@@ -1,8 +1,8 @@
 
 [dependencies]
-  fastly = "^0.8.5"
+  fastly = "0.9.2"
   serde = "1.0.140"
-  base64 = "0.13.0"
+  base64 = "0.21.0"
   handlebars = "4.3.0"
   serde_json = "1.0.81"
 
